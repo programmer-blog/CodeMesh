@@ -1,0 +1,23 @@
+{
+  "name": "devsocial",
+  "version": "1.0.0",
+  "description": "Social network for developers",
+  "main": "app.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "dev": "nodemon src/app.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "Javascript",
+    "nodeJs",
+    "expressjs"
+  ],
+  "author": "Programmer Blog",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "mongoose": "^8.14.1"
+  }
+}
