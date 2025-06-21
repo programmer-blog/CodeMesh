@@ -1,82 +1,187 @@
 const express = require("express");
+const bcrypt = require('bcrypt');
 const connectDB = require("./config/database");
 const User = require("./models/user");
+const cookieParser = require('cookie-parser');
 const app = express();
-
+const jwt = require('jsonwebtoken');
+const { userAuth } = require('./middlewares/auth');
+// Middleware
 app.use(express.json());
+app.use(cookieParser());
 
-app.post("/user", async (req, res) => {
-    const user = new User(req.body);
+// Routes
+app.post("/login", async (req, res) => {
     try {
-        await user.save();
-        res.send("User Added Successfully");
-        console.log("User Added Successfully");
-    } catch (e) {
-        res.status(500).json({ error: "An error occurred. Please try again later." + e });
-        console.log(' Error' + e)
-    }
-});
+        const { emailId, password } = req.body;
 
-app.get('/user', async (req, res) => {
-    const userEmail = req.body.emailId;
-    try {
-        const users = await User.find({ emailId: userEmail });
-
-        if ((users).length === 0) {
-            res.status(404).send({ error: "User not found" })
+        // Validate input
+        if (!emailId || !password) {
+            return res.status(400).json({ error: "Email and password are required" });
         }
 
-        res.send(users);
-    } catch (e) {
-        res.status(500).json({ error: "An error occurred. Please try again later." });
-    }
+        // Find user
+        const user = await User.findOne({ emailId });
+        if (!user) {
+            return res.status(401).json({ error: "Invalid credentials" });
+        }
 
-});
+        // Check password
+        const isPasswordValid = await bcrypt.compare(password, user.password);
+        if (!isPasswordValid) {
+            return res.status(401).json({ error: "Invalid credentials" });
+        }
 
-app.patch("/user", async (req, res) => {
-    const { _id, ...updateData } = req.body;
-    if (!_id) {
-        return res.status(400).send("User ID is required");
-    }
-    try {
-        const updatedUser = await User.findByIdAndUpdate(_id, updateData, {
-            new: true,
-            runValidators: true
+        const token = await jwt.sign({ _id: user._id }, "DEVELOPER@social$123");
+
+        // Set cookie and respond
+        res.cookie("token", token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            maxAge: 1000 * 60 * 60 * 24 // 1 day
         });
 
-        res.send(updateData);
-    } catch (err) {
-        res.status(400).send("Update failed: " + err.message);
-    }
-});
+        return res.json({
+            message: "Login successful",
+            user: {
+                id: user._id,
+                email: user.emailId,
+                firstName: user.firstName
+            }
+        });
 
-app.delete("/user", async (req, res) => {
-    const userId = req.body.userId;
-    try {
-        const user = await User.findByIdAndDelete(userId);
-        res.send("User deleted successfully.")
-    } catch (err) {
-        res.status(400).send("Something went wrong" + err);
-    }
-})
-
-app.get("/feed", async (req, res) => {
-    try {
-        const users = await User.find({});
-        res.send(users)
     } catch (e) {
-        res.status(500).json({ error: "An error occurred. Please try again later." });
+        return res.status(500).json({ error: "Internal server error" });
     }
 });
 
+app.get('/profile', userAuth, async (req, res) => {
+    try {
+        const user = req.user;
+        res.json({
+            data: {
+                user: {
+                    _id: user._id,
+                    firstName: user.firstName,
+                    email: user.emailId
+                }
+            },
+            message: "Profile data"
+        });
+    } catch (e) {
+        res.status(500).json({ error: "Internal server error" });
+    }
+});
+
+app.post("/register", async (req, res) => {
+    try {
+        const { firstName, lastName, emailId, password, gender } = req.body;
+
+        // Validate input
+        if (!firstName || !emailId || !password) {
+            return res.status(400).json({ error: "Required fields missing" });
+        }
+
+        // Check if user exists
+        const existingUser = await User.findOne({ emailId });
+        if (existingUser) {
+            return res.status(400).json({ error: "User already exists" });
+        }
+
+        // Hash password
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        // Create user
+        const user = new User({
+            firstName,
+            lastName,
+            emailId,
+            password: hashedPassword,
+            gender
+        });
+
+        await user.save();
+        return res.status(201).json({ message: "User registered successfully" });
+
+    } catch (e) {
+        return res.status(500).json({ error: "Internal server error" });
+    }
+});
+
+app.get('/users', async (req, res) => {
+    try {
+        const users = await User.find({}, { password: 0 }); // Exclude passwords
+        return res.json(users);
+    } catch (e) {
+        return res.status(500).json({ error: "Internal server error" });
+    }
+});
+
+app.patch("/users/:userId", async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const updates = req.body;
+
+        const ALLOWED_UPDATES = ["photoUrl", "about", "gender", "age", "skills", "emailId", "password"];
+        const isValidUpdate = Object.keys(updates).every(field => ALLOWED_UPDATES.includes(field));
+
+        if (!isValidUpdate) {
+            return res.status(400).json({ error: "Invalid updates" });
+        }
+
+        if (updates.password) {
+            updates.password = await bcrypt.hash(updates.password, 10);
+        }
+
+        const user = await User.findByIdAndUpdate(userId, updates, {
+            new: true,
+            runValidators: true
+        }).select('-password'); // Exclude password
+
+        if (!user) {
+            return res.status(404).json({ error: "User not found" });
+        }
+
+        return res.json(user);
+    } catch (e) {
+        console.error('Update error:', e);
+        return res.status(500).json({ error: "Internal server error" });
+    }
+});
+
+app.delete("/users/:userId", async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const user = await User.findByIdAndDelete(userId);
+
+        if (!user) {
+            return res.status(404).json({ error: "User not found" });
+        }
+
+        return res.json({ message: "User deleted successfully" });
+    } catch (e) {
+        console.error('Delete error:', e);
+        return res.status(500).json({ error: "Internal server error" });
+    }
+});
+
+// Database connection and server start
 connectDB()
     .then(() => {
         console.log("Database connection established");
-    }).catch((err) => {
-        console.error("Database cannot be connected!!");
+        app.listen(7777, () => {
+            console.log("Server running on port 7777");
+        });
     })
+    .catch((err) => {
+        console.error("Database connection failed:", err);
+        process.exit(1);
+    });
 
-app.listen(7777, () => {
-    console.log("Listening on port 7777");
-
+// Error handling middleware
+app.use((err, req, res, next) => {
+    console.error('Unhandled error:', err);
+    res.status(500).json({ error: "Something went wrong" });
 });
+
+module.exports = app;
