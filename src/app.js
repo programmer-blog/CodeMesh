@@ -27,12 +27,12 @@ app.post("/login", async (req, res) => {
         }
 
         // Check password
-        const isPasswordValid = await bcrypt.compare(password, user.password);
+        const isPasswordValid = await user.validatePassword(password);
         if (!isPasswordValid) {
             return res.status(401).json({ error: "Invalid credentials" });
         }
 
-        const token = await jwt.sign({ _id: user._id }, "DEVELOPER@social$123");
+        const token = user.getJWT();
 
         // Set cookie and respond
         res.cookie("token", token, {
